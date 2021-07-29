@@ -6,6 +6,8 @@
 
 
 const int MOTOR_FW_PIN = 2;
+const int MOTOR_BW_PIN = 4;
+const int MOTOR_ON_PIN = 12;
 const int BUZZER_PIN = 3;
 const int LED_PIN = 5;           // the PWM pin the LED is attached to
 const int IR_RECEIVE_PIN = 7;  // pin for the IR sensor
@@ -30,6 +32,22 @@ const int KEY_PREV = 0x40;
 const int KEY_HPLUS = 0xD;
 const int KEY_HMINUS = 0x19;
 const int KEY_PLAYPAUSE = 0x43;
+
+enum EngineStates {
+  OFF,
+  FORWARD,
+  BACKWARD
+};
+
+EngineStates EngineState = OFF;
+
+enum MusicStates {
+  STOPPED,
+  STOPPING,
+  PLAYING
+};
+
+MusicStates MusicState = STOPPED;
 
 // Till havs
 int melody[] = {
@@ -58,7 +76,11 @@ void setup()
 {
   pinMode(LED_PIN, OUTPUT);
   pinMode(MOTOR_FW_PIN, OUTPUT);
+  pinMode(MOTOR_BW_PIN, OUTPUT);
+  pinMode(MOTOR_ON_PIN, OUTPUT);
   digitalWrite(MOTOR_FW_PIN, LOW);
+  digitalWrite(MOTOR_BW_PIN, LOW);
+  digitalWrite(MOTOR_ON_PIN, LOW);
 
   Serial.begin(9600);
   IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK); // Start the receiver, enable feedback LED, take LED feedback pin from the internal boards definition
@@ -78,11 +100,40 @@ int rot = ROT_CENTER;
 int rot_max = 180;
 int rot_min = 0;
 int resetTimeStamp = -1; // if this is set to something else than -1 rotation will be reset after (millis() - resetTimeStamp) > SERVO_RESET_TIMEOUT
-bool PlayMusic = false;
 
 int clamp(int value) {
   value = min(value, rot_max);
   return max(value, rot_min);  
+}
+
+void setEngineState(enum EngineStates state) {
+  // If already in state, toggle off.
+  if (state == EngineState) {
+    state = OFF;
+  }
+
+  switch (state) {
+    case FORWARD:
+      Serial.println("FORWARD");
+      digitalWrite(MOTOR_BW_PIN, LOW);
+      digitalWrite(MOTOR_FW_PIN, HIGH);
+      digitalWrite(MOTOR_ON_PIN, HIGH);
+      break;
+    case BACKWARD:
+      Serial.println("BACKWARD");
+      digitalWrite(MOTOR_FW_PIN, LOW);
+      digitalWrite(MOTOR_BW_PIN, HIGH);
+      digitalWrite(MOTOR_ON_PIN, HIGH);
+      break;
+    case OFF: // fallthrough
+    default:
+      Serial.println("OFF");
+      digitalWrite(MOTOR_FW_PIN, LOW);
+      digitalWrite(MOTOR_BW_PIN, LOW);      
+      digitalWrite(MOTOR_ON_PIN, LOW);
+  }
+
+  EngineState = state;
 }
 
 void fadeLed() {
@@ -107,13 +158,18 @@ void fadeLed() {
 void handleMusic() {
   buzzer.loop(); // MUST call the buzzer.loop() function in loop()
 
-  if (!PlayMusic && buzzer.getState() != BUZZER_IDLE) {
+  if (MusicState == STOPPING && buzzer.getState() == BUZZER_IDLE) {
     buzzer.stop();
+    IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK);
+    MusicState = STOPPED;
+    return;
   }
 
-  if (PlayMusic && buzzer.getState() == BUZZER_IDLE) {
+  if (MusicState == PLAYING && buzzer.getState() == BUZZER_IDLE) {
+    setEngineState(OFF); // Always turn off motor during music playback
     int length = sizeof(noteDurations) / sizeof(int);
     buzzer.playMelody(melody, noteDurations, length); // playing
+    MusicState = STOPPING;
   }
 }
 
@@ -123,10 +179,10 @@ void loop()
   CurTime = millis();
   fadeLed();
   handleMusic();
-  
+
   bool keyValid = false;
   // pause IR while music is playing since buzzer is using same timer (2) as IRremote lib
-  if (!PlayMusic && IrReceiver.decode()) { 
+  if (MusicState == STOPPED && IrReceiver.decode()) { 
     //Serial.println(IrReceiver.decodedIRData.decodedRawData, DEC);
     IrReceiver.printIRResultShort(&Serial);
     keyValid = true;
@@ -152,18 +208,22 @@ void loop()
         resetTimeStamp = CurTime; // returns bad value sometimes
         break;
       case KEY_PLUS:
-        digitalWrite(2, HIGH);
+        if (isRepeat)
+          break;
+        setEngineState(FORWARD);
         break;
       case KEY_MINUS:
-        digitalWrite(2, LOW);
+        if (isRepeat)
+          break;
+        setEngineState(BACKWARD);
         break;
-      case KEY_HMINUS: // Decrease min/max with 15degres
+      case KEY_HMINUS: // Decrease min/max with 15 degrees
         rot_min += 15;
         rot_min = min(rot_min, ROT_CENTER);
         rot_max -= 15;
         rot_max = max(rot_max, ROT_CENTER);
         break;
-      case KEY_HPLUS: // Increase min/max with 15degres
+      case KEY_HPLUS: // Increase min/max with 15 degrees
         rot_min -= 15;
         rot_min = max(rot_min, ROT_MIN_LIMIT);
         rot_max += 15;
@@ -172,7 +232,7 @@ void loop()
       case KEY_PLAYPAUSE:
         if (isRepeat)
           break;
-        PlayMusic = !PlayMusic;
+        MusicState = PLAYING;
         break;
       default:
         keyValid = false;
