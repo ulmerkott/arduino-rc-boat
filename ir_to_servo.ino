@@ -1,37 +1,40 @@
+
 #include <ezBuzzer.h>
-#include <Servo.h>
-
-// #define IR_USE_AVR_TIMER1 // This can change IRremote from using timer2 (which ezBuzzer uses) to timer1 (which servo is using)
-#include <IRremote.h>
-
+//#include <Servo.h>
+#include <ServoTimer2.h>
+#include <AceButton.h>
+using namespace ace_button;
+ 
+#include <RH_ASK.h>
+#ifdef RH_HAVE_HARDWARE_SPI
+#include <SPI.h> // Not actually used but needed to compile
+#endif
 
 const int MOTOR_FW_PIN = 2;
 const int MOTOR_BW_PIN = 4;
 const int MOTOR_ON_PIN = 12;
 const int BUZZER_PIN = 3;
 const int LED_PIN = 5;           // the PWM pin the LED is attached to
-const int IR_RECEIVE_PIN = 7;  // pin for the IR sensor
+const int SERVO_PIN = 6; // Was 9 for Servo lib (timer 1)
+const int RF_RECEIVE_PIN = 11;  // pin for the RF receiver
 
 const int ROT_CENTER = 90;
 const int ROT_STEP = 15;
 const int ROT_MAX_LIMIT = 180;
 const int ROT_MIN_LIMIT = 0;
-const int SERVO_RESET_TIMEOUT = 200; // ms
+const int KEY_RELEASED_TIMEOUT = 500; // ms
 
 const int MIN_BRIGHTNESS = 60;
-
 const int LED_FADE_TIME = 30;
 
-const int KEY_MINUS = 0x7;
-const int KEY_PLUS = 0x15;
-const int KEY_CH_MINUS = 0x45;
-const int KEY_CH = 0x46;
-const int KEY_CH_PLUS = 0x47;
-const int KEY_NEXT = 0x44;
-const int KEY_PREV = 0x40;
-const int KEY_HPLUS = 0xD;
-const int KEY_HMINUS = 0x19;
-const int KEY_PLAYPAUSE = 0x43;
+enum KeyCodes {
+  KEY_LEFT,
+  KEY_RIGHT,
+  KEY_UP,
+  KEY_DOWN,
+  KEY_PLAYMUSIC,
+  KEY_SPEED
+};
 
 enum EngineStates {
   OFF,
@@ -69,8 +72,9 @@ int noteDurations[] = {
 };
 
 
-Servo myservo;
 ezBuzzer buzzer(BUZZER_PIN);
+ServoTimer2 myservo;
+RH_ASK driver(1000);
 
 void setup()
 {
@@ -83,23 +87,27 @@ void setup()
   digitalWrite(MOTOR_ON_PIN, LOW);
 
   Serial.begin(9600);
-  IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK); // Start the receiver, enable feedback LED, take LED feedback pin from the internal boards definition
+ 
+  myservo.attach(SERVO_PIN);  // attaches the servo on pin 9 to the servo object
+  setServo(ROT_CENTER);
 
-  myservo.attach(9);  // attaches the servo on pin 9 to the servo object
-  myservo.write(ROT_CENTER);
+  if (!driver.init()) {
+    Serial.println("init failed");
+  }
 }
 
-int CurTime = 0;
+unsigned long CurTime = 0;
 
 int brightness = MIN_BRIGHTNESS;    // how bright the LED is
 int fadeAmount = 5;    // how many points to fade the LED by
-int LedFadeStart = 0;
+unsigned long LedFadeStart = 0;
 
 
 int rot = ROT_CENTER;
 int rot_max = 180;
 int rot_min = 0;
-int resetTimeStamp = -1; // if this is set to something else than -1 rotation will be reset after (millis() - resetTimeStamp) > SERVO_RESET_TIMEOUT
+int PendingKey = -1;
+unsigned long KeyPressedTimeStamp = 0; // if this is set to something else than -1 rotation will be reset after (millis() - KeyPressedTimeStamp) > KEY_RELEASED_TIMEOUT
 
 int clamp(int value) {
   value = min(value, rot_max);
@@ -108,9 +116,6 @@ int clamp(int value) {
 
 void setEngineState(enum EngineStates state) {
   // If already in state, toggle off.
-  if (state == EngineState) {
-    state = OFF;
-  }
 
   switch (state) {
     case FORWARD:
@@ -160,17 +165,92 @@ void handleMusic() {
 
   if (MusicState == STOPPING && buzzer.getState() == BUZZER_IDLE) {
     buzzer.stop();
-    IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK);
     MusicState = STOPPED;
+    myservo.attach(SERVO_PIN);
     return;
   }
 
   if (MusicState == PLAYING && buzzer.getState() == BUZZER_IDLE) {
+    // Servo is using same timer (2) as buzzer, so lets disable it while music is playing.
+    myservo.detach();
     setEngineState(OFF); // Always turn off motor during music playback
     int length = sizeof(noteDurations) / sizeof(int);
     buzzer.playMelody(melody, noteDurations, length); // playing
     MusicState = STOPPING;
   }
+}
+
+void handleKey(int keyCode, int keyEvent) {
+  bool keyValid = true;
+
+  // Save pressed timestamp to handle missing released
+  if (keyEvent == AceButton::kEventPressed) {
+    KeyPressedTimeStamp = CurTime;
+    PendingKey = keyCode;
+  }
+
+  if (keyEvent == AceButton::kEventReleased) {
+    KeyPressedTimeStamp = 0;
+    PendingKey = -1;
+  }
+
+  switch (keyCode) {
+    case KEY_RIGHT:
+      rot = keyEvent == AceButton::kEventPressed ? rot_max : ROT_CENTER;
+      break;
+    case KEY_LEFT:
+      rot = keyEvent == AceButton::kEventPressed ? rot_min : ROT_CENTER;
+      break;
+    case KEY_SPEED:
+      // Only forward for now
+      setEngineState(keyEvent > 0 ? FORWARD : OFF);
+      PendingKey = -1; // No key release for SPEED keycode.
+      break;
+    case KEY_PLAYMUSIC:
+      MusicState = PLAYING;
+      PendingKey = -1;
+      break;
+    default:
+      keyValid = false;
+      break;
+  }
+  rot = clamp(rot);
+  setServo(rot);
+}
+
+
+void handleInput() {
+  // Send key released if keyreleased is not received within KEY_RELEASED_TIMEOUT
+  if (PendingKey != -1 && (CurTime - KeyPressedTimeStamp) > KEY_RELEASED_TIMEOUT) {
+    KeyPressedTimeStamp = 0;
+    KeyPressedTimeStamp = 0;
+    handleKey(PendingKey, AceButton::kEventReleased);
+  }
+  uint8_t buf[2];
+  uint8_t buflen = sizeof(buf);
+
+  // pause RF while music is playing since buzzer is using same timer (1) as RadioHead lib
+  if (!driver.recv(buf, &buflen)) { // Non-blocking
+    return;
+  }
+
+  // Message with a good checksum received, dump it.
+  //driver.printBuffer("Got:", buf, buflen);
+
+  int keyCode = buf[0];
+  int keyEvent = buf[1];
+  Serial.print("Got key: ");
+  Serial.print(keyCode);
+  Serial.print(" event: ");
+  Serial.println(keyEvent);
+
+
+  handleKey(keyCode, keyEvent);
+}
+
+void setServo(int degrees) {
+  // servo2 uses MAX_PULSE_WIDTH and MIN_PULSE_WIDTH for max/min degrees.
+  myservo.write(map(degrees, 0, 180, MIN_PULSE_WIDTH, MAX_PULSE_WIDTH));
 }
 
 
@@ -179,94 +259,5 @@ void loop()
   CurTime = millis();
   fadeLed();
   handleMusic();
-
-  bool keyValid = false;
-  // pause IR while music is playing since buzzer is using same timer (2) as IRremote lib
-  if (MusicState == STOPPED && IrReceiver.decode()) { 
-    //Serial.println(IrReceiver.decodedIRData.decodedRawData, DEC);
-    IrReceiver.printIRResultShort(&Serial);
-    keyValid = true;
-    bool isRepeat = (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_IS_REPEAT);
-    switch (IrReceiver.decodedIRData.command ) {
-      case KEY_CH_MINUS:
-        rot += ROT_STEP;
-        rot = clamp(rot);
-        break;
-      case KEY_CH_PLUS:
-        rot -= ROT_STEP;
-        rot = clamp(rot);
-        break;
-      case KEY_CH:
-        rot = 90;
-        break;
-      case KEY_NEXT:
-        rot = rot_max;
-        resetTimeStamp = CurTime; // returns bad value sometimes
-        break;
-      case KEY_PREV:
-        rot = rot_min;
-        resetTimeStamp = CurTime; // returns bad value sometimes
-        break;
-      case KEY_PLUS:
-        if (isRepeat)
-          break;
-        setEngineState(FORWARD);
-        break;
-      case KEY_MINUS:
-        if (isRepeat)
-          break;
-        setEngineState(BACKWARD);
-        break;
-      case KEY_HMINUS: // Decrease min/max with 15 degrees
-        rot_min += 15;
-        rot_min = min(rot_min, ROT_CENTER);
-        rot_max -= 15;
-        rot_max = max(rot_max, ROT_CENTER);
-        break;
-      case KEY_HPLUS: // Increase min/max with 15 degrees
-        rot_min -= 15;
-        rot_min = max(rot_min, ROT_MIN_LIMIT);
-        rot_max += 15;
-        rot_max = min(rot_max, ROT_MAX_LIMIT);
-        break;
-      case KEY_PLAYPAUSE:
-        if (isRepeat)
-          break;
-        MusicState = PLAYING;
-        break;
-      default:
-        keyValid = false;
-        break;
-    }
-    rot = clamp(rot);
-    myservo.write(rot);
-    IrReceiver.resume();
-  }
-  //  Serial.println("Event");
-  //
-  //  Serial.println(resetTimeStamp, DEC);
-  //  Serial.println(millis(), DEC);
-  
-  // Reset servo to middle position after if NEXT/PREV buttons are used
-  if (!keyValid) {
-    // Bug causes millis() to return wrong value...
-    if (resetTimeStamp != -1) {
-      if ((millis() - resetTimeStamp) > SERVO_RESET_TIMEOUT || resetTimeStamp < -1 /*bug?*/) {
-        resetTimeStamp = -1;
-        rot = ROT_CENTER;
-        myservo.write(ROT_CENTER);
-      }
-    }
-  // Code used when above bug is present
-  //    if (resetTimeStamp > -1) {
-  //      if (resetTimeStamp * EVENT_LOOP_WAIT > SERVO_RESET_TIMEOUT) {
-  //        resetTimeStamp = -1;
-  //        rot = ROT_CENTER;
-  //        myservo.write(ROT_CENTER);
-  //      }
-  //      else {
-  //        resetTimeStamp++;
-  //      }
-  //    }
-  }
+  handleInput();
 }
