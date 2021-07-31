@@ -229,7 +229,6 @@ void handleInput() {
   uint8_t buf[2];
   uint8_t buflen = sizeof(buf);
 
-  // pause RF while music is playing since buzzer is using same timer (1) as RadioHead lib
   if (!driver.recv(buf, &buflen)) { // Non-blocking
     return;
   }
@@ -243,7 +242,6 @@ void handleInput() {
   Serial.print(keyCode);
   Serial.print(" event: ");
   Serial.println(keyEvent);
-
 
   handleKey(keyCode, keyEvent);
 }
