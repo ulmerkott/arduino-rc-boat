@@ -6,7 +6,7 @@ using namespace ace_button;
 #ifdef RH_HAVE_HARDWARE_SPI
 #include <SPI.h> // Not actually used but needed to compile
 #endif
- 
+
 RH_ASK driver(1000);
 
 // RF Key payload:
@@ -37,7 +37,7 @@ void handleEvent(AceButton*, uint8_t, uint8_t);
 void setup()
 {
 #ifdef RH_HAVE_SERIAL
-    Serial.begin(9600);   // Debugging only
+    Serial.begin(115200);   // Debugging only
 #endif
 
   pinMode(LED_BUILTIN, OUTPUT);
@@ -114,7 +114,7 @@ void sendKey(int keyCode, int keyEvent) {
 void handleEvent(AceButton* button, uint8_t eventType, uint8_t buttonState) {
 
   // Print out a message for all events, for both buttons.
-  Serial.print(F("handleEvent(): pin: "));
+  Serial.print(F("handleEvent(): Pin: "));
   Serial.print(button->getPin());
   Serial.print(F("; eventType: "));
   Serial.print(eventType);
@@ -128,6 +128,9 @@ void handleEvent(AceButton* button, uint8_t eventType, uint8_t buttonState) {
     case AceButton::kEventReleased:
       digitalWrite(LED_BUILTIN, LOW);
       break;
+    case AceButton::kEventDoubleClicked:
+      sendKey(KEY_PLAYMUSIC, 0);
+      return;
     case AceButton::kEventPressed:
       digitalWrite(LED_BUILTIN, HIGH);
       break;
