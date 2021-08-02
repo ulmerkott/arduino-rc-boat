@@ -1,0 +1,5 @@
+{
+    "board": "arduino:avr:uno",
+    "sketch": "ir_to_servo.ino",
+    "port": "/dev/ttyACM0"
+}
