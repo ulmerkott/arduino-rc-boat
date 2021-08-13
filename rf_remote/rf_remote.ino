@@ -25,11 +25,15 @@ enum KeyCodes {
   KEY_SPEED
 };
 
-const int LEFT_BUTTON_PIN = 2; 
-const int RIGHT_BUTTON_PIN = 4; 
+const int LEFT_BUTTON_PIN = 8;
+const int RIGHT_BUTTON_PIN = 6;
+const int FORWARD_BUTTON_PIN = 4;
+const int BACKWARD_BUTTON_PIN = 2;
 
 AceButton button_left(LEFT_BUTTON_PIN, HIGH, KEY_LEFT);
 AceButton button_right(RIGHT_BUTTON_PIN, HIGH, KEY_RIGHT);
+AceButton button_forward(FORWARD_BUTTON_PIN, HIGH, KEY_UP);
+AceButton button_backward(BACKWARD_BUTTON_PIN, HIGH, KEY_DOWN);
 
 // Forward reference to prevent Arduino compiler becoming confused.
 void handleEvent(AceButton*, uint8_t, uint8_t);
@@ -43,6 +47,8 @@ void setup()
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(LEFT_BUTTON_PIN, INPUT_PULLUP);
   pinMode(RIGHT_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(FORWARD_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(BACKWARD_BUTTON_PIN, INPUT_PULLUP);
 
 
   ButtonConfig* buttonConfig = ButtonConfig::getSystemButtonConfig();
@@ -51,7 +57,7 @@ void setup()
   buttonConfig->setFeature(ButtonConfig::kFeatureDoubleClick);
   buttonConfig->setFeature(ButtonConfig::kFeatureLongPress);
   buttonConfig->setFeature(ButtonConfig::kFeatureRepeatPress);
-  
+
   if (!driver.init())
 #ifdef RH_HAVE_SERIAL
     Serial.println("init failed");
@@ -62,20 +68,25 @@ void setup()
 
 const int RF_KEY_SEND_MAX_RATE = 100; // ms
 
-const int SPEED_READ_THRESHOLD = 25; 
+const int SPEED_READ_THRESHOLD = 25;
 int LastSpeed = 0;  // 0-255
 
 unsigned long CurMillis = 0;
 unsigned long LastSentKeyTime = 0;
 
+bool MusicSecretKeyPressed = false;
 
 void loop()
 {
   CurMillis = millis();
-  readSpeed();
+  //readSpeed();
   button_left.check();
-  //button_right.check();
+  button_right.check();
+  button_forward.check();
+  button_backward.check();
 }
+
+
 
 void readSpeed() {
   int curSpeed = map(analogRead(A0),0 , 1023, 0, 255);
@@ -88,9 +99,29 @@ void readSpeed() {
   if (curSpeed < SPEED_READ_THRESHOLD)
     curSpeed = 0;
 
+  Serial.print("Curspeed: ");
   Serial.println(curSpeed);
   LastSpeed = curSpeed;
   sendKey(KEY_SPEED, curSpeed);
+}
+
+bool isMusicKey(int keyCode, int keyEvent) {
+  if (keyCode != KEY_LEFT && keyCode != KEY_RIGHT) {
+    return false;
+  }
+
+  bool curPressed = (keyEvent == AceButton::kEventPressed);
+
+  Serial.print("Ispressed ");
+  Serial.println(curPressed);
+  // Play music only if both left and right are pressed
+  if (MusicSecretKeyPressed && curPressed) {
+    MusicSecretKeyPressed = false;
+    return true;
+  }
+
+  MusicSecretKeyPressed = curPressed;
+  return false;
 }
 
 void sendKey(int keyCode, int keyEvent) {
@@ -129,13 +160,18 @@ void handleEvent(AceButton* button, uint8_t eventType, uint8_t buttonState) {
       digitalWrite(LED_BUILTIN, LOW);
       break;
     case AceButton::kEventDoubleClicked:
-      sendKey(KEY_PLAYMUSIC, 0);
       return;
     case AceButton::kEventPressed:
       digitalWrite(LED_BUILTIN, HIGH);
       break;
     default:
       return;
+  }
+
+  if (isMusicKey(button->getId(), eventType)) {
+    Serial.println("Send PLAYMUSIC");
+    sendKey(KEY_PLAYMUSIC, 0);
+    return;
   }
   sendKey(button->getId(), eventType);
 }

@@ -26,8 +26,8 @@ const int LED_PIN = 5;           // the PWM pin the LED is attached to
 const int SERVO_PIN = 3; // Was 9 for Servo lib (timer 1)
 const int RF_RECEIVE_PIN = 11;  // pin for the RF receiver
 
-const int MOTOR_MAX_SPEED = 156;
-const int MOTOR_MIN_SPEED = 75;
+const int MOTOR_MAX_SPEED = 255;
+const int MOTOR_MIN_SPEED = 75; // Motor doesnt budge until this value
 
 const int ROT_CENTER = 90;
 const int ROT_STEP = 15;
@@ -54,6 +54,8 @@ enum EngineStates {
 };
 
 EngineStates EngineState = OFF;
+const int ENGINE_SPEED_STEP = 25;
+int EngineSpeed = 0;
 
 enum MusicStates {
   STOPPED,
@@ -101,7 +103,7 @@ void setup()
   pinMode(MOTOR_SPEED_PIN, OUTPUT);
   digitalWrite(MOTOR_FW_PIN, LOW);
   digitalWrite(MOTOR_BW_PIN, LOW);
-  //analogWrite(MOTOR_SPEED_PIN, LOW);
+  analogWrite(MOTOR_SPEED_PIN, 0);
 
   Serial.begin(115200);
 #ifdef USE_SERVO
@@ -118,7 +120,7 @@ int brightness = MIN_BRIGHTNESS;    // how bright the LED is
 int fadeAmount = 5;    // how many points to fade the LED by
 unsigned long LedFadeStart = 0;
 
-const int SERVO_TIMEOUT = 400; // Put servo to sleep after a while to keep it from "ticking"
+const int SERVO_TIMEOUT = 350; // Put servo to sleep after a while to keep it from "ticking"
 unsigned long SetServoTime = -1;
 int rot = ROT_CENTER;
 int rot_max = 180;
@@ -135,16 +137,15 @@ void setEngineState(enum EngineStates state, int enSpeed) {
   switch (state) {
     case FORWARD:
       enSpeed = map(enSpeed, 0, 255, MOTOR_MIN_SPEED, MOTOR_MAX_SPEED);
-
       Serial.print("FORWARD: ");
       Serial.println(enSpeed);
-
       digitalWrite(MOTOR_BW_PIN, LOW);
       digitalWrite(MOTOR_FW_PIN, HIGH);
       analogWrite(MOTOR_SPEED_PIN, enSpeed);
       break;
     case BACKWARD:
-      Serial.println("BACKWARD: ");
+      Serial.print("BACKWARD: ");
+      Serial.println(enSpeed);
       digitalWrite(MOTOR_FW_PIN, LOW);
       digitalWrite(MOTOR_BW_PIN, HIGH);
       analogWrite(MOTOR_SPEED_PIN, enSpeed);
@@ -155,6 +156,8 @@ void setEngineState(enum EngineStates state, int enSpeed) {
       digitalWrite(MOTOR_FW_PIN, LOW);
       digitalWrite(MOTOR_BW_PIN, LOW);
       analogWrite(MOTOR_SPEED_PIN, 0);
+      SetEngineSleepTime = 0;
+      SetEngineOnTime = 0;
   }
 
   EngineState = state;
@@ -234,7 +237,14 @@ void handleKey(int keyCode, int keyEvent) {
       rot = keyEvent == AceButton::kEventPressed ? rot_min : ROT_CENTER;
       PendingKey = -1;
       setServo(rot);
-      //MusicState = PLAYING;
+      break;
+    case KEY_UP:
+      setEngineState(keyEvent == AceButton::kEventLongPressed ? FORWARD : OFF, 127);
+      PendingKey = -1; // No key release for FORWARD keycode.
+      break;
+    case KEY_DOWN:
+      setEngineState(keyEvent == AceButton::kEventPressed ? BACKWARD : OFF, 127);
+      PendingKey = -1; // No key release for BACKWARD keycode.
       break;
     case KEY_SPEED:
       // Only forward for now
@@ -299,7 +309,6 @@ void servoSleep() {
   myservo.detach();
   SetServoTime = 0;
 }
-
 
 void loop()
 {
