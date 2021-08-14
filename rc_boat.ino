@@ -125,8 +125,6 @@ unsigned long SetServoTime = -1;
 int rot = ROT_CENTER;
 int rot_max = 180;
 int rot_min = 0;
-int PendingKey = -1;
-unsigned long KeyPressedTimeStamp = 0; // if this is set to something else than -1 rotation will be reset after (millis() - KeyPressedTimeStamp) > KEY_RELEASED_TIMEOUT
 
 int clamp(int value) {
   value = min(value, rot_max);
@@ -134,33 +132,31 @@ int clamp(int value) {
 }
 
 void setEngineState(enum EngineStates state, int enSpeed) {
+  enSpeed = map(enSpeed, 0, 255, MOTOR_MIN_SPEED, MOTOR_MAX_SPEED);
   switch (state) {
     case FORWARD:
-      enSpeed = map(enSpeed, 0, 255, MOTOR_MIN_SPEED, MOTOR_MAX_SPEED);
       Serial.print("FORWARD: ");
       Serial.println(enSpeed);
       digitalWrite(MOTOR_BW_PIN, LOW);
       digitalWrite(MOTOR_FW_PIN, HIGH);
-      analogWrite(MOTOR_SPEED_PIN, enSpeed);
       break;
     case BACKWARD:
       Serial.print("BACKWARD: ");
       Serial.println(enSpeed);
       digitalWrite(MOTOR_FW_PIN, LOW);
       digitalWrite(MOTOR_BW_PIN, HIGH);
-      analogWrite(MOTOR_SPEED_PIN, enSpeed);
       break;
     case OFF: // fallthrough
     default:
+      enSpeed = 0;
       Serial.println("OFF");
       digitalWrite(MOTOR_FW_PIN, LOW);
       digitalWrite(MOTOR_BW_PIN, LOW);
-      analogWrite(MOTOR_SPEED_PIN, 0);
-      SetEngineSleepTime = 0;
-      SetEngineOnTime = 0;
   }
 
+  analogWrite(MOTOR_SPEED_PIN, enSpeed);
   EngineState = state;
+  EngineSpeed = enSpeed;
 }
 
 void fadeLed() {
@@ -213,47 +209,50 @@ void handleMusic() {
 #endif
 }
 
+void handleEngineKey(enum EngineStates state, int keyEvent) {
+  switch(keyEvent) {
+    case AceButton::kEventClicked:
+      if (EngineState == state || EngineState == OFF) {
+        // Increase speed by ENGINE_SPEED_STEP if state is same direction.
+        setEngineState(state, EngineSpeed == 0 ? MOTOR_MIN_SPEED : EngineSpeed + ENGINE_SPEED_STEP);
+        return;
+      }
+      // If previous state was opposite direction, just turn off motor.
+      break;
+    case AceButton::kEventLongPressed:
+      setEngineState(state, 127);
+      break;
+    case AceButton::kEventLongReleased: // fallthrough
+    default:
+      break;
+  }
+  setEngineState(OFF, 0);
+}
+
 void handleKey(int keyCode, int keyEvent) {
   bool keyValid = true;
-
-  // Save pressed timestamp to handle missing released
-  if (keyEvent == AceButton::kEventPressed) {
-    KeyPressedTimeStamp = CurTime;
-    PendingKey = keyCode;
-  }
-
-  if (keyEvent == AceButton::kEventReleased) {
-    KeyPressedTimeStamp = 0;
-    PendingKey = -1;
-  }
 
   switch (keyCode) {
     case KEY_RIGHT:
       rot = keyEvent == AceButton::kEventPressed ? rot_max : ROT_CENTER;
-      PendingKey = -1;
       setServo(rot);
       break;
     case KEY_LEFT:
       rot = keyEvent == AceButton::kEventPressed ? rot_min : ROT_CENTER;
-      PendingKey = -1;
       setServo(rot);
       break;
     case KEY_UP:
-      setEngineState(keyEvent == AceButton::kEventLongPressed ? FORWARD : OFF, 127);
-      PendingKey = -1; // No key release for FORWARD keycode.
+      handleEngineKey(FORWARD, keyEvent);
       break;
     case KEY_DOWN:
-      setEngineState(keyEvent == AceButton::kEventPressed ? BACKWARD : OFF, 127);
-      PendingKey = -1; // No key release for BACKWARD keycode.
+      handleEngineKey(BACKWARD, keyEvent);
       break;
     case KEY_SPEED:
       // Only forward for now
       setEngineState(keyEvent > 0 ? FORWARD : OFF, keyEvent);
-      PendingKey = -1; // No key release for SPEED keycode.
       break;
     case KEY_PLAYMUSIC:
       MusicState = PLAYING;
-      PendingKey = -1;
       break;
     default:
       keyValid = false;
@@ -261,14 +260,7 @@ void handleKey(int keyCode, int keyEvent) {
   }
 }
 
-
 void handleInput() {
-  // Send key released if keyreleased is not received within KEY_RELEASED_TIMEOUT
-  if (PendingKey != -1 && (CurTime - KeyPressedTimeStamp) > KEY_RELEASED_TIMEOUT) {
-    KeyPressedTimeStamp = 0;
-    KeyPressedTimeStamp = 0;
-    handleKey(PendingKey, AceButton::kEventReleased);
-  }
   uint8_t buf[2];
   uint8_t buflen = sizeof(buf);
 
