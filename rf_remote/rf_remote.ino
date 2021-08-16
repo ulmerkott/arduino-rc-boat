@@ -56,7 +56,9 @@ void setup()
   buttonConfig->setFeature(ButtonConfig::kFeatureClick);
   buttonConfig->setFeature(ButtonConfig::kFeatureDoubleClick);
   buttonConfig->setFeature(ButtonConfig::kFeatureLongPress);
-  buttonConfig->setFeature(ButtonConfig::kFeatureRepeatPress);
+  buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterClick);
+  buttonConfig->setFeature(ButtonConfig::kFeatureSuppressAfterLongPress);
+  buttonConfig->setClickDelay(399);
 
   if (!driver.init())
 #ifdef RH_HAVE_SERIAL
@@ -84,6 +86,10 @@ void loop()
   button_right.check();
   button_forward.check();
   button_backward.check();
+
+  if (LastSentKeyTime + 250 < CurMillis) {
+    digitalWrite(LED_BUILTIN, LOW);
+  }
 }
 
 
@@ -125,12 +131,6 @@ bool isMusicKey(int keyCode, int keyEvent) {
 }
 
 void sendKey(int keyCode, int keyEvent) {
-  // Only send keys within the max send rate. Faster key presses will be discarded for now.
-  // TODO: Use a queue?
-  if (CurMillis - LastSentKeyTime < RF_KEY_SEND_MAX_RATE) {
-    return;
-  }
-
   // Packet send time is about 72ms with payload size of 2 bytes
   LastSentKeyTime = CurMillis;
   char buf[2];
@@ -152,21 +152,7 @@ void handleEvent(AceButton* button, uint8_t eventType, uint8_t buttonState) {
   Serial.print(F("; buttonState: "));
   Serial.println(buttonState);
 
-  switch (eventType) {
-    case AceButton::kEventRepeatPressed:
-      // Ignore key repeats for now.
-      return;
-    case AceButton::kEventReleased:
-      digitalWrite(LED_BUILTIN, LOW);
-      break;
-    case AceButton::kEventDoubleClicked:
-      return;
-    case AceButton::kEventPressed:
-      digitalWrite(LED_BUILTIN, HIGH);
-      break;
-    default:
-      return;
-  }
+  digitalWrite(LED_BUILTIN, HIGH);
 
   if (isMusicKey(button->getId(), eventType)) {
     Serial.println("Send PLAYMUSIC");
