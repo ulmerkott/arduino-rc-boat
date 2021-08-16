@@ -27,7 +27,7 @@ const int SERVO_PIN = 3; // Was 9 for Servo lib (timer 1)
 const int RF_RECEIVE_PIN = 11;  // pin for the RF receiver
 
 const int MOTOR_MAX_SPEED = 255;
-const int MOTOR_MIN_SPEED = 75; // Motor doesnt budge until this value
+const int MOTOR_MIN_SPEED = 140; // Motor doesnt budge until this value
 
 const int ROT_CENTER = 90;
 const int ROT_STEP = 15;
@@ -122,7 +122,6 @@ unsigned long LedFadeStart = 0;
 
 const int SERVO_TIMEOUT = 350; // Put servo to sleep after a while to keep it from "ticking"
 unsigned long SetServoTime = -1;
-int rot = ROT_CENTER;
 int rot_max = 180;
 int rot_min = 0;
 
@@ -132,7 +131,7 @@ int clamp(int value) {
 }
 
 void setEngineState(enum EngineStates state, int enSpeed) {
-  enSpeed = map(enSpeed, 0, 255, MOTOR_MIN_SPEED, MOTOR_MAX_SPEED);
+  enSpeed = constrain(enSpeed, MOTOR_MIN_SPEED, MOTOR_MAX_SPEED);
   switch (state) {
     case FORWARD:
       Serial.print("FORWARD: ");
@@ -211,6 +210,8 @@ void handleMusic() {
 
 void handleEngineKey(enum EngineStates state, int keyEvent) {
   switch(keyEvent) {
+    case AceButton::kEventPressed:
+      return; // ignore
     case AceButton::kEventClicked:
       if (EngineState == state || EngineState == OFF) {
         // Increase speed by ENGINE_SPEED_STEP if state is same direction.
@@ -220,7 +221,7 @@ void handleEngineKey(enum EngineStates state, int keyEvent) {
       // If previous state was opposite direction, just turn off motor.
       break;
     case AceButton::kEventLongPressed:
-      setEngineState(state, 127);
+      setEngineState(state, MOTOR_MIN_SPEED);
       break;
     case AceButton::kEventLongReleased: // fallthrough
     default:
@@ -229,17 +230,26 @@ void handleEngineKey(enum EngineStates state, int keyEvent) {
   setEngineState(OFF, 0);
 }
 
+void handleServoKey(int key, int keyEvent) {
+  int rotation = key == KEY_LEFT ? rot_max : rot_min;
+
+  if (keyEvent == AceButton::kEventPressed
+      || keyEvent == AceButton::kEventLongPressed) {
+    setServo(rotation);
+  }
+  else if (keyEvent == AceButton::kEventReleased
+          || keyEvent == AceButton::kEventLongReleased) {
+    setServo(ROT_CENTER);
+  }
+}
+
 void handleKey(int keyCode, int keyEvent) {
   bool keyValid = true;
 
   switch (keyCode) {
-    case KEY_RIGHT:
-      rot = keyEvent == AceButton::kEventPressed ? rot_max : ROT_CENTER;
-      setServo(rot);
-      break;
-    case KEY_LEFT:
-      rot = keyEvent == AceButton::kEventPressed ? rot_min : ROT_CENTER;
-      setServo(rot);
+    case KEY_RIGHT: // Fallthrough
+    case KEY_LEFT: 
+      handleServoKey(keyCode, keyEvent);
       break;
     case KEY_UP:
       handleEngineKey(FORWARD, keyEvent);
